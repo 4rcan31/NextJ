@@ -1,0 +1,15 @@
+{
+
+    "users": {  
+        "header-metadata-colums" : [
+            ["int", "notnull", "auto_increment", "primary_key", "size:30"],
+            ["string", "notnull"]
+        ],
+        "id" : [],
+        "username" : [],
+        "email" : []
+    },
+    "products" : {
+        "id" : []
+    }
+}
