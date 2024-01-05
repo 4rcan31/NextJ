@@ -1,16 +1,26 @@
 package core.db.migration;
 
-import java.util.*;
 import com.google.gson.Gson;
+import java.io.*;
+import java.util.*;
 
 public class Schema {
 
     private List<Table> tables;
-     Map<String, Map<String, Object>> data;
+    public String dirPath;
+    public String nameSchema;
+    public String structureJson;
+    public Map<String, Map<String, Object>> structureObjectJava;
+    public String fileNameBaseStructure;
+    public String columnNameBaseHeaders;
 
-    public Schema() {
+    public Schema(String name) {
         this.tables = new ArrayList<>();
-        this.data = new LinkedHashMap<>();
+        this.structureObjectJava = new LinkedHashMap<>();
+        this.nameSchema = name;
+        this.dirPath = "src/main/java/core/db/migration/shecmas/" + this.nameSchema;
+        this.fileNameBaseStructure = "/structure-base-schema.json";
+        this.columnNameBaseHeaders = "header-metadata-colums";
     }
 
     public Table addTable(String tableName) {
@@ -20,63 +30,79 @@ public class Schema {
     }
 
     public void save() {
-        // Aquí podrías guardar el esquema como un archivo JSON si lo deseas
+        File dirSave = new File(this.dirPath);
+        this.structureJson = getStructureJson();
+
+        if (dirSave.exists()) {
+            System.out.println("El schema ya existe.");
+            return;
+        }
+
+        try {
+            if (!dirSave.mkdirs()) {
+                System.out.println("No se pudo crear el schema " + this.nameSchema);
+                return;
+            }
+
+            writeStructureJsonToFile();
+
+            for (Map.Entry<String, Map<String, Object>> entry : this.structureObjectJava.entrySet()) {
+                String nameTable = entry.getKey();
+                File tableJsonSave = new File(this.dirPath + "/" + nameTable + ".json");
+
+                if (tableJsonSave.exists()) {
+                    System.out.println("La tabla " + nameTable + " ya existe");
+                    continue;
+                }
+
+                if (!tableJsonSave.createNewFile()) {
+                    System.out.println("No se pudo crear la tabla " + nameTable);
+                    continue;
+                }
+
+                writeTableJsonToFile(nameTable, entry.getValue());
+            }
+
+        } catch (SecurityException | IOException e) {
+            System.out.println("Error al crear el archivo: " + e.getMessage());
+        }
     }
 
-    public String getStructure() {
-        /*
-        * Esta es la estructura del JSON que representa cómo se guardarán los datos. 
-        * Es importante destacar que el List final no solamente contendrá Strings, ya 
-        * que una columna puede contener enteros u otros tipos de datos. Sin embargo, 
-        * en este punto, esto es únicamente para crear la estructura del JSON y no se 
-        * guardarán datos reales.
-        * 
-        * La estructura es la siguiente:
-        * 
-        * {
-        *     "Table1": {
-        *         "header-metadata-colums": [
-        *             ["int", "notnull", "auto_increment", "primary_key", "size:30"],
-        *             ["string", "notnull"]
-        *         ],
-        *         "colum1": ["1", "2"],
-        *         "colum2": ["data1", "data2"]
-        *     },
-        *     "Table2": {
-        *         "header-metadata-colums": [
-        *             ["int", "notnull", "auto_increment", "primary_key", "size:30"],
-        *             ["string", "notnull"]
-        *         ],
-        *         "colum1": ["3", "4"],
-        *         "colum2": ["data3", "data4"]
-        *     }
-        * }
-        */
+    private void writeStructureJsonToFile() throws IOException {
+        String filePathSaveStrucureJson = this.dirPath + this.fileNameBaseStructure;
+        File StructureSchemaJson = new File(filePathSaveStrucureJson);
+        StructureSchemaJson.createNewFile();
+        FileWriter writeStructure = new FileWriter(filePathSaveStrucureJson);
+        writeStructure.write(this.structureJson);
+        writeStructure.close();
+    }
 
+    private void writeTableJsonToFile(String nameTable, Map<String, Object> structureTable) throws IOException {
+        Gson structureTableJson = new Gson();
+        String tableJson = structureTableJson.toJson(structureTable);
+        FileWriter writerStructure = new FileWriter(this.dirPath + "/" + nameTable + ".json");
+        writerStructure.write(tableJson);
+        writerStructure.close();
+        System.out.println("La tabla " + nameTable + " se creó correctamente!");
+    }
 
-        /* 
-         * Se crea un LinkedHashMap para guardar
-         * el orden
-         */
-        for (int i = 0; i < this.tables.size(); i++) {
-            Table table = this.tables.get(i);
+    public Map<String, Map<String, Object>> buildStructure() {
+        for (Table table : this.tables) {
             String nameTable = table.getName();
-        
             Map<String, Object> tableData = new LinkedHashMap<>();
-            tableData.put("header-metadata-colums", table.getConfigColumns());
-        
-            List<String> columns = table.getColumns();
-        
-            // Iterar sobre las columnas y agregar listas vacías para cada una
-            for (String column : columns) {
+            tableData.put(this.columnNameBaseHeaders, table.getConfigColumns());
+
+            for (String column : table.getColumns()) {
                 tableData.put(column, new ArrayList<>());
             }
-        
-            data.put(nameTable, tableData);
+
+            this.structureObjectJava.put(nameTable, tableData);
         }
-        
-        Gson gson = new Gson();
-        return gson.toJson(data);
-    
+        return this.structureObjectJava;
+    }
+
+    public String getStructureJson() {
+        this.structureJson = (new Gson()).toJson(this.buildStructure());
+        return this.structureJson;
     }
 }

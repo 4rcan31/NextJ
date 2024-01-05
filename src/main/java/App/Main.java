@@ -9,7 +9,7 @@ import core.db.migration.Schema;
 
 public class Main {
     public static void main(String[] args) {
-        Schema mySchema = new Schema();
+        Schema mySchema = new Schema("dbtest");
 
         Table usersTable = mySchema.addTable("users");
 
@@ -24,6 +24,6 @@ public class Main {
 
         // Guardar el esquema como un archivo JSON
         mySchema.save();
-        System.out.println(mySchema.getStructure());
+       // System.out.println(mySchema.getStructure());
     }
 }
