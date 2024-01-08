@@ -1,25 +1,19 @@
 package core.db.datamanagement;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 
-public class Nexj {
+import core.db.datamanagement.kernel.Kernel;
+import core.db.datamanagement.kernel.Reader;
+
+public class Nexj extends Kernel {
 
     private String schema;
-    private String pathShemaFile;
 
     // query
     public String operation;
@@ -34,8 +28,7 @@ public class Nexj {
         this.schema = schema;
         this.columns = new ArrayList<>();
         this.conditions = new ArrayList<>();
-        this.values = new HashMap<>();
-        this.pathShemaFile = "src/main/java/core/db/migration/shecmas/" + this.schema;
+        this.values = new LinkedHashMap<>();
     }
 
     public Nexj select(String... columnNames) {
@@ -59,6 +52,10 @@ public class Nexj {
     }
 
     public Nexj and(String value1, String condition, String value2) {
+        if (this.conditions.size() % 3 != 0) {
+            throw new IllegalArgumentException("Incomplete condition found.");
+        }
+
         this.conditions.add("AND");
         this.condition(value1, condition, value2);
         return this;
@@ -88,114 +85,106 @@ public class Nexj {
         return this;
     }
 
-    public Map<String, Object> readJson(String table) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(this.pathShemaFile + "/" + table + ".json"))) {
-            Gson gson = new Gson();
-            StringBuilder content = new StringBuilder();
-            String line;
-
-            // Leer el archivo y almacenar su contenido en un StringBuilder
-            while ((line = reader.readLine()) != null) {
-                content.append(line);
-            }
-
-            // Convertir el contenido del archivo a un JsonObject
-            JsonObject jsonObject = gson.fromJson(content.toString(), JsonObject.class);
-
-            // Procesar cada entrada del JsonObject y crear un nuevo Map<String, Object>
-            Map<String, Object> resultMap = new LinkedHashMap<>();
-            for (Map.Entry<String, JsonElement> entry : jsonObject.entrySet()) {
-                String key = entry.getKey();
-                JsonElement value = entry.getValue();
-
-                if (value.isJsonArray()) {
-                    JsonArray jsonArray = value.getAsJsonArray();
-
-                    // Verificar si el valor es una lista de listas de cadenas
-                    if (jsonArray.size() > 0 && jsonArray.get(0).isJsonArray()) {
-                        List<List<String>> listOfLists = new ArrayList<>();
-                        for (JsonElement arrayElement : jsonArray) {
-                            JsonArray innerArray = arrayElement.getAsJsonArray();
-                            List<String> innerList = new ArrayList<>();
-                            for (JsonElement innerElement : innerArray) {
-                                innerList.add(innerElement.getAsString());
-                            }
-                            listOfLists.add(innerList);
-                        }
-                        resultMap.put(key, listOfLists);
-                    } else { // Si no es una lista de listas, entonces es una lista de cadenas
-                        List<String> stringList = new ArrayList<>();
-                        for (JsonElement element : jsonArray) {
-                            stringList.add(element.getAsString());
-                        }
-                        resultMap.put(key, stringList);
-                    }
-                }
-            }
-
-            return resultMap;
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null; // Manejo de excepciones
-        }
-    }
-
-    public Map<String, List<String>> readData(String table) {
-        Map<String, Object> data = this.readJson(table);
-
-        Map<String, List<String>> extractedData = new LinkedHashMap<>();
-        boolean isFirst = true;
-
-        for (Map.Entry<String, Object> entry : data.entrySet()) {
-            if (isFirst) {
-                isFirst = false;
-                continue; // interrumtor para obviar el primero ya que ese es solamente la estrucura
-            }
-
-            Object value = entry.getValue();
-            if (value instanceof List) {
-                List<String> stringList = new ArrayList<>();
-                for (Object obj : (List<?>) value) {
-                    stringList.add(obj.toString());
-                }
-                extractedData.put(entry.getKey(), stringList);
-            }
-        }
-
-        return extractedData;
-    }
-
     public List<List<String>> run() {
-        Map<String, List<String>> data = this.readData(this.from);
+        Reader read = new Reader(this.from, this.schema);
+        Map<String, List<String>> data = read.readData();
+        List<Integer> sizes = read.getSizes();
 
-        List<Integer> sizes = data.entrySet().stream()
-                .filter(entry -> !entry.getKey().equals("header-metadata-colums"))
-                .map(entry -> entry.getValue().size())
-                .collect(Collectors.toList());
-
-        boolean isSame = sizes.stream().distinct().limit(2).count() <= 1;
-
-        if (!isSame) {
+        if (!this.allElementsEqual(sizes)) {
             System.err.println("Hay una falla en los datos");
             System.exit(0);
         }
 
-        int totalRows = sizes.get(0); // Obtener el total de filas de las listas
+        int totalRows = sizes.get(0);
 
         List<List<String>> tableData = new ArrayList<>();
 
         for (int i = 0; i < totalRows; i++) {
-            final int index = i; // Variable final o efectivamente final
+            final int index = i;
+            List<String> row = new ArrayList<>();
 
-            List<String> row = data.values().stream()
-                    .map(valueList -> index < valueList.size() ? valueList.get(index) : "")
-                    .collect(Collectors.toList());
+            for (String columnSelect : this.columns) {
+                if (columnSelect.equals("*")) {
+                    Map<String, String> rowData = new LinkedHashMap<>();
+                    for (Map.Entry<String, List<String>> entry : data.entrySet()) {
+                        String column = entry.getKey();
+                        List<String> values = entry.getValue();
+                        String value = (index < values.size()) ? values.get(index) : null;
+                        if (value != null) {
+                            rowData.put(column, value);
+                        }
+                    }
 
-            this.printJson(row);
-            tableData.add(row);
+                    if (matchesConditions(rowData)) {
+                        row.addAll(rowData.values());
+                    }
+                } else {
+                    if (data.containsKey(columnSelect)) {
+                        List<String> values = data.get(columnSelect);
+                        if (values != null) {
+                            String value = (index < values.size()) ? values.get(index) : null;
+                            if (value != null) {
+                                row.add(value);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Se verifica si la fila no está vacía antes de agregarla a la tabla de datos
+            if (!row.isEmpty()) {
+                tableData.add(row);
+            }
         }
-        this.result = tableData;
+
         return tableData;
+    }
+
+    private boolean matchesConditions(Map<String, String> rowData) {
+        boolean conditionsMatch = true;
+        boolean orFlag = false;
+        int j = 0;
+
+        while (j < this.conditions.size()) {
+            String column = this.conditions.get(j);
+            String operator = this.conditions.get(j + 1);
+            String value = this.conditions.get(j + 2);
+            String dataValue = rowData.get(column);
+
+            if (operator.equals("=")) {
+                conditionsMatch &= dataValue.equals(value);
+            } else if (operator.equals("<")) {
+                conditionsMatch &= (Integer.parseInt(dataValue) < Integer.parseInt(value));
+            } else if (operator.equals(">")) {
+                conditionsMatch &= (Integer.parseInt(dataValue) > Integer.parseInt(value));
+            } else {
+                System.out.println("El operador " + operator + " no es soportado");
+                System.exit(0);
+            }
+
+            j += 3; // Moverse al siguiente conjunto de condiciones
+
+            if (j < this.conditions.size()) {
+                String nextLogicalOperator = this.conditions.get(j);
+                if (nextLogicalOperator.equals("AND")) {
+                    // Continuar evaluando el siguiente conjunto de condiciones
+                    j++;
+                } else if (nextLogicalOperator.equals("OR")) {
+                    if (conditionsMatch) {
+                        return true;
+                    } else {
+                        orFlag = true;
+                        j++; // Moverse al siguiente conjunto de condiciones después del OR
+                        conditionsMatch = true; // Restablecer a true para la siguiente comparación OR
+                    }
+                } else {
+                    System.out.println("El operador logico " + nextLogicalOperator + " no es soportado");
+                    System.exit(0);
+                }
+            }
+        }
+
+        return conditionsMatch || orFlag;
     }
 
     public String toJson() {
